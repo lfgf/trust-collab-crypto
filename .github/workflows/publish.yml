@@ -1,0 +1,63 @@
+name: Publish NPM Package
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '.github/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+          
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Bump Version
+        run: |
+          cd projects/kojinx/collab-crypto
+          npm version patch --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Build Library
+        run: npm run build
+
+      - name: Publish to NPM
+        run: |
+          cd dist/kojinx/collab-crypto
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit bumped version
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add projects/kojinx/collab-crypto/package.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: bump version [skip ci]"
+          git push
+
+      - name: Update Monolith
+        run: |
+          cd ..
+          git clone https://${{ secrets.PAT_TOKEN }}@github.com/lfgf/kojinx.git kojinx-frontend
+          cd kojinx-frontend
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          npm pkg set dependencies.@kojinx/collab-crypto="^${{ env.NEW_VERSION }}"
+          
+          git add package.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: bump @kojinx/collab-crypto to latest"
+          git push origin main

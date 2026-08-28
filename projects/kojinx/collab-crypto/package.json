@@ -1,0 +1,13 @@
+{
+  "name": "@kojinx/collab-crypto",
+  "version": "0.0.1",
+  "description": "Kojinx End-to-End Encryption Trust Module for Collaboration Hub",
+  "peerDependencies": {
+    "@angular/common": "^17.3.0",
+    "@angular/core": "^17.3.0"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "sideEffects": false
+}
