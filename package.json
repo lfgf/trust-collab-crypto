@@ -4,7 +4,7 @@
   "scripts": {
     "ng": "ng",
     "build": "ng build",
-    "postbuild": "xcopy dist\\kojinx\\collab-crypto ..\\kojinx-frontend\\node_modules\\@kojinx\\collab-crypto /E /I /Y",
+    "postbuild": "node -e \"if (process.platform === 'win32') require('child_process').execSync('xcopy dist\\\\kojinx\\\\collab-crypto ..\\\\kojinx-frontend\\\\node_modules\\\\@kojinx\\\\collab-crypto /E /I /Y', {stdio: 'inherit'})\"",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },

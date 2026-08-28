@@ -32,7 +32,7 @@ jobs:
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
 
       - name: Build Library
-        run: npm run build
+        run: npx ng build
 
       - name: Publish to NPM
         run: |
