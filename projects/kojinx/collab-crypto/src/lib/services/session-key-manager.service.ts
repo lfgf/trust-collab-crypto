@@ -39,10 +39,25 @@ export class SessionKeyManagerService {
     optional: true
   });
 
+  /** Storage provider falling back to browser localStorage if not explicitly injected */
+  private get storageProvider(): KojinxStorageProvider | null {
+    if (this.storage) return this.storage;
+    if (typeof localStorage !== 'undefined') {
+      return {
+        getItem: (k: string) => Promise.resolve(localStorage.getItem(k)),
+        setItem: (k: string, v: string) => Promise.resolve(localStorage.setItem(k, v)),
+        removeItem: (k: string) => Promise.resolve(localStorage.removeItem(k))
+      };
+    }
+    return null;
+  }
+
   /** Fast in-memory cache mapped by conversationId */
   private activeKeysByConversation = new Map<string, ConversationSessionKey>();
   /** Fast in-memory cache mapped by sessionKeyId (for historic messages) */
   private keysById = new Map<string, ConversationSessionKey>();
+  /** Deduplicates in-flight server requests for the same conversation ID */
+  private inFlightFetches = new Map<string, Promise<ConversationSessionKey | null>>();
 
   /**
    * Retrieves or creates an active session key for a 1:1 Direct Message conversation.
@@ -137,8 +152,9 @@ export class SessionKeyManagerService {
     if (cached) return cached;
 
     // Check local storage
-    if (this.storage) {
-      const stored = await this.storage.getItem(
+    const sp = this.storageProvider;
+    if (sp) {
+      const stored = await sp.getItem(
         `kojinx_sk_${sessionKeyId}`
       );
       if (stored) {
@@ -262,7 +278,8 @@ export class SessionKeyManagerService {
   private async persistKeyLocally(
     key: ConversationSessionKey
   ): Promise<void> {
-    if (!this.storage) return;
+    const sp = this.storageProvider;
+    if (!sp) return;
     try {
       const rawKeyBase64 = await this.cryptoService.exportRawKeyBase64(
         key.rawKey
@@ -275,14 +292,14 @@ export class SessionKeyManagerService {
         generation: key.generation,
         createdAt: key.createdAt
       });
-      await this.storage.setItem(`kojinx_sk_${key.id}`, data);
+      await sp.setItem(`kojinx_sk_${key.id}`, data);
     } catch {
       // ignore persistence error
     }
   }
 
   /**
-   * Fetches latest session key from server and unwraps it locally.
+   * Fetches latest session key from server and unwraps it locally with deduplication.
    */
   private async fetchSessionKeyFromServer(
     conversationId: string,
@@ -290,41 +307,55 @@ export class SessionKeyManagerService {
   ): Promise<ConversationSessionKey | null> {
     if (!this.httpFetch || !this.getApiUrl || !this.getAuthToken) return null;
 
-    try {
-      const token = await this.getAuthToken();
-      const apiUrl = this.getApiUrl();
-      const res = await this.httpFetch<{
-        sessionKeyId: string;
-        generation: number;
-        encryptedKey: string;
-        createdAt?: string;
-      }>(`${apiUrl}/api/e2e/session-keys/${conversationId}`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-
-      if (res.status === 200 && res.data?.encryptedKey) {
-        const rawKey = await this.cryptoService.unwrapSessionKey(
-          res.data.encryptedKey
-        );
-        return {
-          id: res.data.sessionKeyId,
-          type,
-          conversationId,
-          rawKey,
-          generation: res.data.generation || 1,
-          createdAt: res.data.createdAt
-            ? new Date(res.data.createdAt).getTime()
-            : Date.now()
-        };
-      }
-    } catch {
-      // Not found or network error
+    const existingPromise = this.inFlightFetches.get(conversationId);
+    if (existingPromise) {
+      return existingPromise;
     }
 
-    return null;
+    const fetchPromise = (async () => {
+      try {
+        const token = await this.getAuthToken!();
+        const apiUrl = this.getApiUrl!();
+        const res = await this.httpFetch!<{
+          sessionKeyId: string;
+          generation: number;
+          encryptedKey: string;
+          createdAt?: string;
+        }>(`${apiUrl}/api/e2e/session-keys/${conversationId}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (res.status === 200 && res.data?.encryptedKey) {
+          const rawKey = await this.cryptoService.unwrapSessionKey(
+            res.data.encryptedKey
+          );
+          const key: ConversationSessionKey = {
+            id: res.data.sessionKeyId,
+            type,
+            conversationId,
+            rawKey,
+            generation: res.data.generation || 1,
+            createdAt: res.data.createdAt
+              ? new Date(res.data.createdAt).getTime()
+              : Date.now()
+          };
+          this.cacheKey(key);
+          await this.persistKeyLocally(key);
+          return key;
+        }
+      } catch {
+        // Not found or network error
+      } finally {
+        this.inFlightFetches.delete(conversationId);
+      }
+      return null;
+    })();
+
+    this.inFlightFetches.set(conversationId, fetchPromise);
+    return fetchPromise;
   }
 
   /**
