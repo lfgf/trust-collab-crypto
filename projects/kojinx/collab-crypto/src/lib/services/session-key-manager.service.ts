@@ -218,8 +218,8 @@ export class SessionKeyManagerService {
     this.cacheKey(sessionKey);
     await this.persistKeyLocally(sessionKey);
 
-    // Upload to server if online
-    if (this.httpFetch && this.getApiUrl && this.getAuthToken) {
+    // Upload to server if online and there are member payloads to distribute
+    if (this.httpFetch && this.getApiUrl && this.getAuthToken && Object.keys(memberPayloads).length > 0) {
       const token = await this.getAuthToken();
       const apiUrl = this.getApiUrl();
       const payload: SessionKeyExchangePayload = {
